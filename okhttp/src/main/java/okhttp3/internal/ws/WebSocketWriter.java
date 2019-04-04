@@ -15,6 +15,7 @@
  */
 package okhttp3.internal.ws;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.Random;
 import okio.Buffer;
@@ -24,6 +25,7 @@ import okio.Sink;
 import okio.Timeout;
 
 import static okhttp3.internal.ws.WebSocketProtocol.B0_FLAG_FIN;
+import static okhttp3.internal.ws.WebSocketProtocol.B0_FLAG_RSV1;
 import static okhttp3.internal.ws.WebSocketProtocol.B1_FLAG_MASK;
 import static okhttp3.internal.ws.WebSocketProtocol.OPCODE_CONTINUATION;
 import static okhttp3.internal.ws.WebSocketProtocol.OPCODE_CONTROL_CLOSE;
@@ -41,7 +43,7 @@ import static okhttp3.internal.ws.WebSocketProtocol.validateCloseCode;
  *
  * <p>This class is not thread safe.
  */
-final class WebSocketWriter {
+final class WebSocketWriter implements Closeable {
   final boolean isClient;
   final Random random;
 
@@ -58,7 +60,11 @@ final class WebSocketWriter {
   private final byte[] maskKey;
   private final Buffer.UnsafeCursor maskCursor;
 
-  WebSocketWriter(boolean isClient, BufferedSink sink, Random random) {
+  private MessageDeflater messageDeflater = null;
+  private boolean compressionEnabled;
+
+  WebSocketWriter(boolean isClient, BufferedSink sink, Random random,
+      WebSocketOptions options) {
     if (sink == null) throw new NullPointerException("sink == null");
     if (random == null) throw new NullPointerException("random == null");
     this.isClient = isClient;
@@ -69,6 +75,11 @@ final class WebSocketWriter {
     // Masks are only a concern for client writers.
     maskKey = isClient ? new byte[4] : null;
     maskCursor = isClient ? new Buffer.UnsafeCursor() : null;
+
+    this.compressionEnabled = options.compressionEnabled;
+    if (options.compressionEnabled) {
+      messageDeflater = new MessageDeflater(options.contextTakeover);
+    }
   }
 
   /** Send a ping with the supplied {@code payload}. */
@@ -173,6 +184,9 @@ final class WebSocketWriter {
     if (isFinal) {
       b0 |= B0_FLAG_FIN;
     }
+    if (compressionEnabled && isFirstFrame) {
+      b0 |= B0_FLAG_RSV1;
+    }
     sinkBuffer.writeByte(b0);
 
     int b1 = 0;
@@ -212,6 +226,13 @@ final class WebSocketWriter {
     sink.emit();
   }
 
+  @Override
+  public void close() throws IOException {
+    if (messageDeflater != null) {
+      messageDeflater.close();
+    }
+  }
+
   final class FrameSink implements Sink {
     int formatOpcode;
     long contentLength;
@@ -221,7 +242,13 @@ final class WebSocketWriter {
     @Override public void write(Buffer source, long byteCount) throws IOException {
       if (closed) throw new IOException("closed");
 
-      buffer.write(source, byteCount);
+      Buffer uncompressedSource = source;
+      if (messageDeflater != null) {
+        uncompressedSource = CompressionCorrector.applyPostDeflate(
+            messageDeflater.deflate(source));
+      }
+
+      buffer.write(uncompressedSource, uncompressedSource.size());
 
       // Determine if this is a buffered write which we can defer until close() flushes.
       boolean deferWrite = isFirstFrame

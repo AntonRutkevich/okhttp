@@ -55,8 +55,10 @@ public final class WebSocketWriterTest {
   };
 
   // Mutually exclusive. Use the one corresponding to the peer whose behavior you wish to test.
-  private final WebSocketWriter serverWriter = new WebSocketWriter(false, data, random);
-  private final WebSocketWriter clientWriter = new WebSocketWriter(true, data, random);
+  private final WebSocketWriter serverWriter =
+      new WebSocketWriter(false, data, random, WebSocketOptions.DEFAULT);
+  private final WebSocketWriter clientWriter =
+      new WebSocketWriter(true, data, random, WebSocketOptions.DEFAULT);
 
   @Test public void serverTextMessage() throws IOException {
     BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, -1));

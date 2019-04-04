@@ -113,6 +113,13 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   private boolean enqueuedClose;
 
   /**
+   * For client, suggested compression options.
+   * Actual will be defined based on the server response.
+   * For server, actual compression options for outbound stream.
+   */
+  private WebSocketOptions options;
+
+  /**
    * When executed this will cancel this websocket. This future itself should be canceled if that is
    * unnecessary because the web socket is already closed or canceled.
    */
@@ -140,7 +147,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   private boolean awaitingPong;
 
   public RealWebSocket(Request request, WebSocketListener listener, Random random,
-      long pingIntervalMillis) {
+      long pingIntervalMillis, boolean compression, boolean contextTakeover) {
     if (!"GET".equals(request.method())) {
       throw new IllegalArgumentException("Request must be GET: " + request.method());
     }
@@ -148,6 +155,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
     this.listener = listener;
     this.random = random;
     this.pingIntervalMillis = pingIntervalMillis;
+    this.options = new WebSocketOptions(compression, contextTakeover);
 
     byte[] nonce = new byte[16];
     random.nextBytes(nonce);
@@ -161,6 +169,11 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         failWebSocket(e, null);
       }
     };
+  }
+
+  public RealWebSocket(Request request, WebSocketListener listener, Random random,
+    long pingIntervalMillis) {
+      this(request, listener, random, pingIntervalMillis, false, false);
   }
 
   @Override public Request request() {
@@ -180,12 +193,28 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         .eventListener(EventListener.NONE)
         .protocols(ONLY_HTTP1)
         .build();
-    final Request request = originalRequest.newBuilder()
+
+    final Request.Builder builder = originalRequest.newBuilder()
         .header("Upgrade", "websocket")
         .header("Connection", "Upgrade")
         .header("Sec-WebSocket-Key", key)
-        .header("Sec-WebSocket-Version", "13")
-        .build();
+        .header("Sec-WebSocket-Version", "13");
+
+    if (options.compressionEnabled) {
+      if (options.contextTakeover) {
+        // Java Deflater does not allow specifying window size
+        // and the underlying zlib uses default value of MAX_WBITS=15.
+        // It's the default window size for many deflate implementations.
+        builder.header("Sec-WebSocket-Extensions",
+            "permessage-deflate; server_max_window_bits=15; client_max_window_bits=15");
+      } else {
+        builder.header("Sec-WebSocket-Extensions",
+            "permessage-deflate; server_no_context_takeover; client_no_context_takeover");
+      }
+    }
+
+    final Request request = builder.build();
+
     call = Internal.instance.newWebSocketCall(client, request);
     call.enqueue(new Callback() {
       @Override public void onResponse(Call call, Response response) {
@@ -194,6 +223,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         try {
           checkUpgradeSuccess(response, exchange);
           streams = exchange.newWebSocketStreams();
+          options = WebSocketOptions.parseServerResponse(response);
         } catch (IOException e) {
           if (exchange != null) exchange.webSocketUpgradeFailed();
           failWebSocket(e, response);
@@ -252,7 +282,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   public void initReaderAndWriter(String name, Streams streams) throws IOException {
     synchronized (this) {
       this.streams = streams;
-      this.writer = new WebSocketWriter(streams.client, streams.sink, random);
+      this.writer = new WebSocketWriter(streams.client, streams.sink, random, options);
       this.executor = new ScheduledThreadPoolExecutor(1, Util.threadFactory(name, false));
       if (pingIntervalMillis != 0) {
         executor.scheduleAtFixedRate(
@@ -345,6 +375,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
     if (code == -1) throw new IllegalArgumentException();
 
     Streams toClose = null;
+    WebSocketReader readerToClose = null;
+    WebSocketWriter writerToClose = null;
     synchronized (this) {
       if (receivedCloseCode != -1) throw new IllegalStateException("already closed");
       receivedCloseCode = code;
@@ -352,6 +384,10 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       if (enqueuedClose && messageAndCloseQueue.isEmpty()) {
         toClose = this.streams;
         this.streams = null;
+        readerToClose = this.reader;
+        this.reader = null;
+        writerToClose = this.writer;
+        this.writer = null;
         if (cancelFuture != null) cancelFuture.cancel(false);
         this.executor.shutdown();
       }
@@ -365,6 +401,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       }
     } finally {
       closeQuietly(toClose);
+      closeQuietly(readerToClose);
+      closeQuietly(writerToClose);
     }
   }
 
@@ -557,11 +595,17 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
 
   public void failWebSocket(Exception e, @Nullable Response response) {
     Streams streamsToClose;
+    WebSocketReader readerToClose;
+    WebSocketWriter writerToClose;
     synchronized (this) {
       if (failed) return; // Already failed.
       failed = true;
       streamsToClose = this.streams;
       this.streams = null;
+      readerToClose = this.reader;
+      this.reader = null;
+      writerToClose = this.writer;
+      this.writer = null;
       if (cancelFuture != null) cancelFuture.cancel(false);
       if (executor != null) executor.shutdown();
     }
@@ -570,6 +614,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       listener.onFailure(this, e, response);
     } finally {
       closeQuietly(streamsToClose);
+      closeQuietly(readerToClose);
+      closeQuietly(writerToClose);
     }
   }
 

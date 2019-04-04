@@ -15,6 +15,7 @@
  */
 package okhttp3.internal.ws;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.ProtocolException;
 import java.util.concurrent.TimeUnit;
@@ -48,7 +49,7 @@ import static okhttp3.internal.ws.WebSocketProtocol.toggleMask;
  *
  * <p>This class is not thread safe.
  */
-final class WebSocketReader {
+final class WebSocketReader implements Closeable {
   public interface FrameCallback {
     void onReadMessage(String text) throws IOException;
     void onReadMessage(ByteString bytes) throws IOException;
@@ -68,12 +69,15 @@ final class WebSocketReader {
   long frameLength;
   boolean isFinalFrame;
   boolean isControlFrame;
+  boolean readingCompressedMessage;
 
   private final Buffer controlFrameBuffer = new Buffer();
   private final Buffer messageFrameBuffer = new Buffer();
 
   private final byte[] maskKey;
   private final Buffer.UnsafeCursor maskCursor;
+
+  private MessageInflater messageInflater = new MessageInflater();
 
   WebSocketReader(boolean isClient, BufferedSource source, FrameCallback frameCallback) {
     if (source == null) throw new NullPointerException("source == null");
@@ -128,12 +132,25 @@ final class WebSocketReader {
       throw new ProtocolException("Control frames must be final.");
     }
 
-    boolean reservedFlag1 = (b0 & B0_FLAG_RSV1) != 0;
+    boolean compressedFlag = (b0 & B0_FLAG_RSV1) != 0;
     boolean reservedFlag2 = (b0 & B0_FLAG_RSV2) != 0;
     boolean reservedFlag3 = (b0 & B0_FLAG_RSV3) != 0;
-    if (reservedFlag1 || reservedFlag2 || reservedFlag3) {
+
+    if (opcode == OPCODE_TEXT || opcode == OPCODE_BINARY) {
+      readingCompressedMessage = compressedFlag;
+    }
+
+    if (reservedFlag2 || reservedFlag3) {
       // Reserved flags are for extensions which we currently do not support.
-      throw new ProtocolException("Reserved flags are unsupported.");
+      throw new ProtocolException("Reserved flags rsv2 and rsv3 are unsupported.");
+    }
+
+    if (compressedFlag && isControlFrame) {
+      throw new ProtocolException("Control frames cannot be compressed.");
+    }
+
+    if (compressedFlag && opcode == OPCODE_CONTINUATION) {
+      throw new ProtocolException("Reserved flag 1 must not be set on continuation frames.");
     }
 
     int b1 = source.readByte() & 0xff;
@@ -215,10 +232,16 @@ final class WebSocketReader {
 
     readMessage();
 
+    final Buffer message = readingCompressedMessage
+        ? messageInflater.inflate(CompressionCorrector.applyPreInflate(messageFrameBuffer))
+        : messageFrameBuffer;
+
+    readingCompressedMessage = false;
+
     if (opcode == OPCODE_TEXT) {
-      frameCallback.onReadMessage(messageFrameBuffer.readUtf8());
+      frameCallback.onReadMessage(message.readUtf8());
     } else {
-      frameCallback.onReadMessage(messageFrameBuffer.readByteString());
+      frameCallback.onReadMessage(message.readByteString());
     }
   }
 
@@ -260,5 +283,10 @@ final class WebSocketReader {
         throw new ProtocolException("Expected continuation opcode. Got: " + toHexString(opcode));
       }
     }
+  }
+
+  @Override
+  public void close() throws IOException {
+    messageInflater.close();
   }
 }
