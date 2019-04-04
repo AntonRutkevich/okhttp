@@ -15,6 +15,7 @@
  */
 package okhttp3.internal.ws;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.ProtocolException;
 import java.util.concurrent.TimeUnit;
@@ -48,7 +49,7 @@ import static okhttp3.internal.ws.WebSocketProtocol.toggleMask;
  *
  * <p>This class is not thread safe.
  */
-final class WebSocketReader {
+final class WebSocketReader implements Closeable {
   public interface FrameCallback {
     void onReadMessage(String text) throws IOException;
     void onReadMessage(ByteString bytes) throws IOException;
@@ -60,14 +61,17 @@ final class WebSocketReader {
   final boolean isClient;
   final BufferedSource source;
   final FrameCallback frameCallback;
+  final MessageInflater messageInflater;
 
   boolean closed;
+  boolean compressionEnabled;
 
   // Stateful data about the current frame.
   int opcode;
   long frameLength;
   boolean isFinalFrame;
   boolean isControlFrame;
+  boolean readingCompressedMessage;
 
   private final Buffer controlFrameBuffer = new Buffer();
   private final Buffer messageFrameBuffer = new Buffer();
@@ -75,16 +79,20 @@ final class WebSocketReader {
   private final byte[] maskKey;
   private final Buffer.UnsafeCursor maskCursor;
 
-  WebSocketReader(boolean isClient, BufferedSource source, FrameCallback frameCallback) {
+  WebSocketReader(boolean isClient, BufferedSource source,
+      FrameCallback frameCallback, Boolean compressionEnabled) {
     if (source == null) throw new NullPointerException("source == null");
     if (frameCallback == null) throw new NullPointerException("frameCallback == null");
     this.isClient = isClient;
     this.source = source;
     this.frameCallback = frameCallback;
+    this.compressionEnabled = compressionEnabled;
 
     // Masks are only a concern for server writers.
     maskKey = isClient ? null : new byte[4];
     maskCursor = isClient ? null : new Buffer.UnsafeCursor();
+
+    messageInflater = compressionEnabled ? new MessageInflater() : null;
   }
 
   /**
@@ -131,9 +139,29 @@ final class WebSocketReader {
     boolean reservedFlag1 = (b0 & B0_FLAG_RSV1) != 0;
     boolean reservedFlag2 = (b0 & B0_FLAG_RSV2) != 0;
     boolean reservedFlag3 = (b0 & B0_FLAG_RSV3) != 0;
-    if (reservedFlag1 || reservedFlag2 || reservedFlag3) {
+
+    if (reservedFlag2 || reservedFlag3) {
       // Reserved flags are for extensions which we currently do not support.
-      throw new ProtocolException("Reserved flags are unsupported.");
+      throw new ProtocolException("Reserved flags rsv2 and rsv3 are unsupported.");
+    }
+
+    if (reservedFlag1) {
+      if (!compressionEnabled) {
+        throw new ProtocolException(
+            "Reserved flag rsv1 is not supported if compression is disabled.");
+      }
+
+      if (isControlFrame) {
+        throw new ProtocolException("Reserved flag rsv1 must not be set on control frames.");
+      }
+
+      if (opcode == OPCODE_CONTINUATION) {
+        throw new ProtocolException("Reserved flag rsv1 1 must not be set on continuation frames.");
+      }
+
+      if (opcode == OPCODE_TEXT || opcode == OPCODE_BINARY) {
+        readingCompressedMessage = true;
+      }
     }
 
     int b1 = source.readByte() & 0xff;
@@ -215,10 +243,16 @@ final class WebSocketReader {
 
     readMessage();
 
+    final Buffer message = readingCompressedMessage
+        ? messageInflater.inflate(messageFrameBuffer)
+        : messageFrameBuffer;
+
+    readingCompressedMessage = false;
+
     if (opcode == OPCODE_TEXT) {
-      frameCallback.onReadMessage(messageFrameBuffer.readUtf8());
+      frameCallback.onReadMessage(message.readUtf8());
     } else {
-      frameCallback.onReadMessage(messageFrameBuffer.readByteString());
+      frameCallback.onReadMessage(message.readByteString());
     }
   }
 
@@ -259,6 +293,13 @@ final class WebSocketReader {
       if (opcode != OPCODE_CONTINUATION) {
         throw new ProtocolException("Expected continuation opcode. Got: " + toHexString(opcode));
       }
+    }
+  }
+
+  @Override
+  public void close() throws IOException {
+    if (messageInflater != null) {
+      messageInflater.close();
     }
   }
 }

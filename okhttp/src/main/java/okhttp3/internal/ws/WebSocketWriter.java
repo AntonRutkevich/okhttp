@@ -24,6 +24,7 @@ import okio.Sink;
 import okio.Timeout;
 
 import static okhttp3.internal.ws.WebSocketProtocol.B0_FLAG_FIN;
+import static okhttp3.internal.ws.WebSocketProtocol.B0_FLAG_RSV1;
 import static okhttp3.internal.ws.WebSocketProtocol.B1_FLAG_MASK;
 import static okhttp3.internal.ws.WebSocketProtocol.OPCODE_CONTINUATION;
 import static okhttp3.internal.ws.WebSocketProtocol.OPCODE_CONTROL_CLOSE;
@@ -150,7 +151,7 @@ final class WebSocketWriter {
    * Stream a message payload as a series of frames. This allows control frames to be interleaved
    * between parts of the message.
    */
-  Sink newMessageSink(int formatOpcode, long contentLength) {
+  Sink newMessageSink(int formatOpcode, long contentLength, boolean isCompressed) {
     if (activeWriter) {
       throw new IllegalStateException("Another message writer is active. Did you call close()?");
     }
@@ -160,18 +161,22 @@ final class WebSocketWriter {
     frameSink.formatOpcode = formatOpcode;
     frameSink.contentLength = contentLength;
     frameSink.isFirstFrame = true;
+    frameSink.isCompressed = isCompressed;
     frameSink.closed = false;
 
     return frameSink;
   }
 
   void writeMessageFrame(int formatOpcode, long byteCount, boolean isFirstFrame,
-      boolean isFinal) throws IOException {
+      boolean isFinal, boolean isCompressed) throws IOException {
     if (writerClosed) throw new IOException("closed");
 
     int b0 = isFirstFrame ? formatOpcode : OPCODE_CONTINUATION;
     if (isFinal) {
       b0 |= B0_FLAG_FIN;
+    }
+    if (isCompressed && isFirstFrame) {
+      b0 |= B0_FLAG_RSV1;
     }
     sinkBuffer.writeByte(b0);
 
@@ -216,6 +221,7 @@ final class WebSocketWriter {
     int formatOpcode;
     long contentLength;
     boolean isFirstFrame;
+    boolean isCompressed;
     boolean closed;
 
     @Override public void write(Buffer source, long byteCount) throws IOException {
@@ -230,7 +236,7 @@ final class WebSocketWriter {
 
       long emitCount = buffer.completeSegmentByteCount();
       if (emitCount > 0 && !deferWrite) {
-        writeMessageFrame(formatOpcode, emitCount, isFirstFrame, false /* final */);
+        writeMessageFrame(formatOpcode, emitCount, isFirstFrame, false /* final */, isCompressed);
         isFirstFrame = false;
       }
     }
@@ -238,7 +244,7 @@ final class WebSocketWriter {
     @Override public void flush() throws IOException {
       if (closed) throw new IOException("closed");
 
-      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, false /* final */);
+      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, false /* final */, isCompressed);
       isFirstFrame = false;
     }
 
@@ -249,7 +255,7 @@ final class WebSocketWriter {
     @Override public void close() throws IOException {
       if (closed) throw new IOException("closed");
 
-      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, true /* final */);
+      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, true /* final */, isCompressed);
       closed = true;
       activeWriter = false;
     }
