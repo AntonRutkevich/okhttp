@@ -58,6 +58,8 @@ import static org.assertj.core.data.Offset.offset;
 import static org.junit.Assert.fail;
 
 public final class WebSocketHttpTest {
+  private static final String HEADER_WS_EXTENSION = "Sec-WebSocket-Extensions";
+
   @Rule public final MockWebServer webServer = new MockWebServer();
 
   private final HandshakeCertificates handshakeCertificates = localhost();
@@ -401,6 +403,22 @@ public final class WebSocketHttpTest {
     WebSocket server = serverListener.assertOpen();
 
     closeWebSockets(webSocket, server);
+  }
+
+  @Test public void noExtensionHeaderWithDisabledCompression() {
+    client = client.newBuilder()
+        .addInterceptor(chain -> {
+          assertThat(chain.request().header(HEADER_WS_EXTENSION)).isNull();
+          return chain.proceed(chain.request());
+        })
+        .build();
+
+    webServer.enqueue(new MockResponse().withWebSocketUpgrade(serverListener));
+
+    WebSocket webSocket = newWebSocket();
+    clientListener.assertOpen();
+
+    closeWebSockets(webSocket, serverListener.assertOpen());
   }
 
   @Test public void overflowOutgoingQueue() {
@@ -792,7 +810,9 @@ public final class WebSocketHttpTest {
 
   private RealWebSocket newWebSocket(Request request) {
     RealWebSocket webSocket = new RealWebSocket(
-        request, clientListener, random, client.pingIntervalMillis());
+        request, clientListener, random,
+        client.pingIntervalMillis(),
+        false, false);
     webSocket.connect(client);
     return webSocket;
   }

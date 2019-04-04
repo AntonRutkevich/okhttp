@@ -68,6 +68,19 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
    */
   private static final long CANCEL_AFTER_CLOSE_MILLIS = 60 * 1000;
 
+  private static final String HEADER_WS_EXTENSION = "Sec-WebSocket-Extensions";
+
+  // Not specifying *_no_context_takeover to let server decide
+  private static final String HEADER_VALUE_DEFAULT_CONTEXT_TAKEOVER = "permessage-deflate";
+
+  /**
+   * Java Deflater does not allow specifying window size
+   * and the underlying zlib uses default value of MAX_WBITS=15.
+   * It's the default window size for many deflate implementations too.
+   */
+  private static final String HEADER_VALUE_CONTEXT_TAKEOVER =
+      "permessage-deflate; server_max_window_bits=15; client_max_window_bits=15";
+
   /** The application's original request unadulterated by web socket headers. */
   private final Request originalRequest;
 
@@ -94,6 +107,12 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   private ScheduledExecutorService executor;
 
   /**
+   * Null until web socket is connected with compression enabled.
+   * Used to compress data at message level.
+   */
+  private MessageDeflater messageDeflater;
+
+  /**
    * The streams held by this web socket. This is non-null until all incoming messages have been
    * read and all outgoing messages have been written. It is closed when both reader and writer are
    * exhausted, or if there is any failure.
@@ -111,6 +130,13 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
 
   /** True if we've enqueued a close frame. No further message frames will be enqueued. */
   private boolean enqueuedClose;
+
+  /**
+   * For client, suggested compression options.
+   * Actual will be defined based on the server response.
+   * For server, actual compression options for outbound stream.
+   */
+  private WebSocketOptions options;
 
   /**
    * When executed this will cancel this websocket. This future itself should be canceled if that is
@@ -140,7 +166,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   private boolean awaitingPong;
 
   public RealWebSocket(Request request, WebSocketListener listener, Random random,
-      long pingIntervalMillis) {
+      long pingIntervalMillis, boolean compression, boolean contextTakeover) {
     if (!"GET".equals(request.method())) {
       throw new IllegalArgumentException("Request must be GET: " + request.method());
     }
@@ -148,6 +174,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
     this.listener = listener;
     this.random = random;
     this.pingIntervalMillis = pingIntervalMillis;
+    this.options = new WebSocketOptions(compression, contextTakeover);
 
     byte[] nonce = new byte[16];
     random.nextBytes(nonce);
@@ -161,6 +188,11 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         failWebSocket(e, null);
       }
     };
+  }
+
+  public RealWebSocket(Request request, WebSocketListener listener, Random random,
+    long pingIntervalMillis) {
+      this(request, listener, random, pingIntervalMillis, false, false);
   }
 
   @Override public Request request() {
@@ -180,12 +212,23 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         .eventListener(EventListener.NONE)
         .protocols(ONLY_HTTP1)
         .build();
-    final Request request = originalRequest.newBuilder()
+
+    final Request.Builder builder = originalRequest.newBuilder()
         .header("Upgrade", "websocket")
         .header("Connection", "Upgrade")
         .header("Sec-WebSocket-Key", key)
-        .header("Sec-WebSocket-Version", "13")
-        .build();
+        .header("Sec-WebSocket-Version", "13");
+
+    if (options.compressionEnabled) {
+      if (options.contextTakeover) {
+        builder.header(HEADER_WS_EXTENSION, HEADER_VALUE_CONTEXT_TAKEOVER);
+      } else {
+        builder.header(HEADER_WS_EXTENSION, HEADER_VALUE_DEFAULT_CONTEXT_TAKEOVER);
+      }
+    }
+
+    final Request request = builder.build();
+
     call = Internal.instance.newWebSocketCall(client, request);
     call.enqueue(new Callback() {
       @Override public void onResponse(Call call, Response response) {
@@ -194,6 +237,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         try {
           checkUpgradeSuccess(response, exchange);
           streams = exchange.newWebSocketStreams();
+          options = WebSocketOptions.parseServerResponse(response);
         } catch (IOException e) {
           if (exchange != null) exchange.webSocketUpgradeFailed();
           failWebSocket(e, response);
@@ -252,6 +296,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   public void initReaderAndWriter(String name, Streams streams) throws IOException {
     synchronized (this) {
       this.streams = streams;
+      this.messageDeflater = options.compressionEnabled
+          ? new MessageDeflater(options.contextTakeover) : null;
       this.writer = new WebSocketWriter(streams.client, streams.sink, random);
       this.executor = new ScheduledThreadPoolExecutor(1, Util.threadFactory(name, false));
       if (pingIntervalMillis != 0) {
@@ -263,7 +309,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       }
     }
 
-    reader = new WebSocketReader(streams.client, streams.source, this);
+    reader = new WebSocketReader(streams.client, streams.source, this,
+        options.compressionEnabled);
   }
 
   /** Receive frames until there are no more. Invoked only by the reader thread. */
@@ -345,6 +392,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
     if (code == -1) throw new IllegalArgumentException();
 
     Streams toClose = null;
+    WebSocketReader readerToClose = null;
+    MessageDeflater deflaterToClose = null;
     synchronized (this) {
       if (receivedCloseCode != -1) throw new IllegalStateException("already closed");
       receivedCloseCode = code;
@@ -352,6 +401,10 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       if (enqueuedClose && messageAndCloseQueue.isEmpty()) {
         toClose = this.streams;
         this.streams = null;
+        readerToClose = this.reader;
+        this.reader = null;
+        deflaterToClose = this.messageDeflater;
+        this.writer = null;
         if (cancelFuture != null) cancelFuture.cancel(false);
         this.executor.shutdown();
       }
@@ -365,6 +418,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       }
     } finally {
       closeQuietly(toClose);
+      closeQuietly(readerToClose);
+      closeQuietly(deflaterToClose);
     }
   }
 
@@ -493,13 +548,28 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         writer.writePong(pong);
 
       } else if (messageOrClose instanceof Message) {
-        ByteString data = ((Message) messageOrClose).data;
+        ByteString uncompressedData = ((Message) messageOrClose).data;
+
+        ByteString data = uncompressedData;
+        boolean compressMessage = false;
+        if (messageDeflater != null) {
+          ByteString deflated = messageDeflater.deflate(uncompressedData).readByteString();
+
+          // If context takeover is NOT used, it's guaranteed that sending uncompressed message
+          // which is smaller than compressed version will be more efficient.
+          // We cannot make such assumptions if context takeover is used.
+          if (options.contextTakeover || deflated.size() < uncompressedData.size()) {
+            data = deflated;
+            compressMessage = true;
+          }
+        }
+
         BufferedSink sink = Okio.buffer(writer.newMessageSink(
-            ((Message) messageOrClose).formatOpcode, data.size()));
+            ((Message) messageOrClose).formatOpcode, data.size(), compressMessage));
         sink.write(data);
         sink.close();
         synchronized (this) {
-          queueSize -= data.size();
+          queueSize -= uncompressedData.size();
         }
 
       } else if (messageOrClose instanceof Close) {
@@ -557,11 +627,17 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
 
   public void failWebSocket(Exception e, @Nullable Response response) {
     Streams streamsToClose;
+    WebSocketReader readerToClose;
+    MessageDeflater deflaterToClose;
     synchronized (this) {
       if (failed) return; // Already failed.
       failed = true;
       streamsToClose = this.streams;
       this.streams = null;
+      readerToClose = this.reader;
+      this.reader = null;
+      deflaterToClose = this.messageDeflater;
+      this.writer = null;
       if (cancelFuture != null) cancelFuture.cancel(false);
       if (executor != null) executor.shutdown();
     }
@@ -570,6 +646,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       listener.onFailure(this, e, response);
     } finally {
       closeQuietly(streamsToClose);
+      closeQuietly(readerToClose);
+      closeQuietly(deflaterToClose);
     }
   }
 
