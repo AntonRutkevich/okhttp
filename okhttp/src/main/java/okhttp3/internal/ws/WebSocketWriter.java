@@ -55,13 +55,13 @@ final class WebSocketWriter implements Closeable {
   final Buffer buffer = new Buffer();
   final FrameSink frameSink = new FrameSink();
 
+  final boolean compressionEnabled;
+  final MessageDeflater messageDeflater;
+
   boolean activeWriter;
 
   private final byte[] maskKey;
   private final Buffer.UnsafeCursor maskCursor;
-
-  private MessageDeflater messageDeflater = null;
-  private boolean compressionEnabled;
 
   WebSocketWriter(boolean isClient, BufferedSink sink, Random random,
       WebSocketOptions options) {
@@ -77,9 +77,8 @@ final class WebSocketWriter implements Closeable {
     maskCursor = isClient ? new Buffer.UnsafeCursor() : null;
 
     this.compressionEnabled = options.compressionEnabled;
-    if (options.compressionEnabled) {
-      messageDeflater = new MessageDeflater(options.contextTakeover);
-    }
+    messageDeflater = compressionEnabled ?
+        new MessageDeflater(options.contextTakeover) : null;
   }
 
   /** Send a ping with the supplied {@code payload}. */

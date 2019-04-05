@@ -34,8 +34,10 @@ public final class WebSocketReaderTest {
   private final Random random = new Random(0);
 
   // Mutually exclusive. Use the one corresponding to the peer whose behavior you wish to test.
-  final WebSocketReader serverReader = new WebSocketReader(false, data, callback.asFrameCallback());
-  final WebSocketReader clientReader = new WebSocketReader(true, data, callback.asFrameCallback());
+  final WebSocketReader serverReader =
+      new WebSocketReader(false, data, callback.asFrameCallback(), false);
+  final WebSocketReader clientReader =
+      new WebSocketReader(true, data, callback.asFrameCallback(), false);
 
   @After public void tearDown() {
     callback.assertExhausted();

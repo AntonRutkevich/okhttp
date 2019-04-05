@@ -293,7 +293,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       }
     }
 
-    reader = new WebSocketReader(streams.client, streams.source, this);
+    reader = new WebSocketReader(streams.client, streams.source, this,
+        options.compressionEnabled);
   }
 
   /** Receive frames until there are no more. Invoked only by the reader thread. */
