@@ -43,7 +43,7 @@ import static okhttp3.internal.ws.WebSocketProtocol.validateCloseCode;
  *
  * <p>This class is not thread safe.
  */
-final class WebSocketWriter implements Closeable {
+final class WebSocketWriter {
   final boolean isClient;
   final Random random;
 
@@ -56,7 +56,6 @@ final class WebSocketWriter implements Closeable {
   final FrameSink frameSink = new FrameSink();
 
   final boolean compressionEnabled;
-  final MessageDeflater messageDeflater;
 
   boolean activeWriter;
 
@@ -64,7 +63,7 @@ final class WebSocketWriter implements Closeable {
   private final Buffer.UnsafeCursor maskCursor;
 
   WebSocketWriter(boolean isClient, BufferedSink sink, Random random,
-      WebSocketOptions options) {
+      boolean compressionEnabled) {
     if (sink == null) throw new NullPointerException("sink == null");
     if (random == null) throw new NullPointerException("random == null");
     this.isClient = isClient;
@@ -76,9 +75,7 @@ final class WebSocketWriter implements Closeable {
     maskKey = isClient ? new byte[4] : null;
     maskCursor = isClient ? new Buffer.UnsafeCursor() : null;
 
-    this.compressionEnabled = options.compressionEnabled;
-    messageDeflater = compressionEnabled ?
-        new MessageDeflater(options.contextTakeover) : null;
+    this.compressionEnabled = compressionEnabled;
   }
 
   /** Send a ping with the supplied {@code payload}. */
@@ -225,13 +222,6 @@ final class WebSocketWriter implements Closeable {
     sink.emit();
   }
 
-  @Override
-  public void close() throws IOException {
-    if (messageDeflater != null) {
-      messageDeflater.close();
-    }
-  }
-
   final class FrameSink implements Sink {
     int formatOpcode;
     long contentLength;
@@ -241,13 +231,7 @@ final class WebSocketWriter implements Closeable {
     @Override public void write(Buffer source, long byteCount) throws IOException {
       if (closed) throw new IOException("closed");
 
-      Buffer uncompressedSource = source;
-      if (messageDeflater != null) {
-        uncompressedSource = CompressionCorrector.applyPostDeflate(
-            messageDeflater.deflate(source));
-      }
-
-      buffer.write(uncompressedSource, uncompressedSource.size());
+      buffer.write(source, byteCount);
 
       // Determine if this is a buffered write which we can defer until close() flushes.
       boolean deferWrite = isFirstFrame

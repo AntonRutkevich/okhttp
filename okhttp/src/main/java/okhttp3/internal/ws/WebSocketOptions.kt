@@ -12,8 +12,7 @@ data class WebSocketOptions(
     private const val OPTION_CLIENT_MAX_WINDOW_BITS = "client_max_window_bits"
     private const val SUPPORTED_CLIENT_MAX_WINDOW_BITS = 15
 
-    @JvmField
-    val DEFAULT = WebSocketOptions(
+    private val DEFAULT = WebSocketOptions(
         compressionEnabled = false,
         contextTakeover = false
     )

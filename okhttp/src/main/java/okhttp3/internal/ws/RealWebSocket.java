@@ -93,6 +93,9 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   /** Null until this web socket is connected. Used for writes, pings, and close timeouts. */
   private ScheduledExecutorService executor;
 
+  /** Null until web socket is connected with compression enabled. Used to compress data at message level */
+  private MessageDeflater messageDeflater;
+
   /**
    * The streams held by this web socket. This is non-null until all incoming messages have been
    * read and all outgoing messages have been written. It is closed when both reader and writer are
@@ -282,7 +285,10 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   public void initReaderAndWriter(String name, Streams streams) throws IOException {
     synchronized (this) {
       this.streams = streams;
-      this.writer = new WebSocketWriter(streams.client, streams.sink, random, options);
+      this.messageDeflater = options.compressionEnabled ?
+          new MessageDeflater(options.contextTakeover) : null;
+      this.writer = new WebSocketWriter(streams.client, streams.sink, random,
+          options.compressionEnabled);
       this.executor = new ScheduledThreadPoolExecutor(1, Util.threadFactory(name, false));
       if (pingIntervalMillis != 0) {
         executor.scheduleAtFixedRate(
@@ -377,7 +383,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
 
     Streams toClose = null;
     WebSocketReader readerToClose = null;
-    WebSocketWriter writerToClose = null;
+    MessageDeflater deflaterToClose = null;
     synchronized (this) {
       if (receivedCloseCode != -1) throw new IllegalStateException("already closed");
       receivedCloseCode = code;
@@ -387,7 +393,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         this.streams = null;
         readerToClose = this.reader;
         this.reader = null;
-        writerToClose = this.writer;
+        deflaterToClose = this.messageDeflater;
         this.writer = null;
         if (cancelFuture != null) cancelFuture.cancel(false);
         this.executor.shutdown();
@@ -403,7 +409,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
     } finally {
       closeQuietly(toClose);
       closeQuietly(readerToClose);
-      closeQuietly(writerToClose);
+      closeQuietly(deflaterToClose);
     }
   }
 
@@ -532,13 +538,20 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         writer.writePong(pong);
 
       } else if (messageOrClose instanceof Message) {
-        ByteString data = ((Message) messageOrClose).data;
+        ByteString uncompressedData = ((Message) messageOrClose).data;
+
+        ByteString data = uncompressedData;
+        if (messageDeflater != null) {
+          data = CompressionCorrector.applyPostDeflate(
+              messageDeflater.deflate(uncompressedData)).readByteString();
+        }
+
         BufferedSink sink = Okio.buffer(writer.newMessageSink(
             ((Message) messageOrClose).formatOpcode, data.size()));
         sink.write(data);
         sink.close();
         synchronized (this) {
-          queueSize -= data.size();
+          queueSize -= uncompressedData.size();
         }
 
       } else if (messageOrClose instanceof Close) {
@@ -597,7 +610,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   public void failWebSocket(Exception e, @Nullable Response response) {
     Streams streamsToClose;
     WebSocketReader readerToClose;
-    WebSocketWriter writerToClose;
+    MessageDeflater deflaterToClose;
     synchronized (this) {
       if (failed) return; // Already failed.
       failed = true;
@@ -605,7 +618,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       this.streams = null;
       readerToClose = this.reader;
       this.reader = null;
-      writerToClose = this.writer;
+      deflaterToClose = this.messageDeflater;
       this.writer = null;
       if (cancelFuture != null) cancelFuture.cancel(false);
       if (executor != null) executor.shutdown();
@@ -616,7 +629,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
     } finally {
       closeQuietly(streamsToClose);
       closeQuietly(readerToClose);
-      closeQuietly(writerToClose);
+      closeQuietly(deflaterToClose);
     }
   }
 
