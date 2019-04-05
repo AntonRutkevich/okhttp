@@ -53,21 +53,24 @@ public final class WebSocketReaderTest {
     }
   }
 
-  @Test public void reservedFlagsAreUnsupported() throws IOException {
+  @Test public void reservedFlag1IsUnsupportedWithNoCompression() throws IOException {
     data.write(ByteString.decodeHex("ca00")); // Empty pong, flag 1 set.
     try {
       clientReader.processNextFrame();
       fail();
     } catch (ProtocolException e) {
-      assertThat(e.getMessage()).isEqualTo("Reserved flags are unsupported.");
+      assertThat(e.getMessage())
+          .isEqualTo("Reserved flag rsv1 is not supported if compression is disabled.");
     }
-    data.clear();
+  }
+
+  @Test public void reservedFlags2and3AreUnsupported() throws IOException {
     data.write(ByteString.decodeHex("aa00")); // Empty pong, flag 2 set.
     try {
       clientReader.processNextFrame();
       fail();
     } catch (ProtocolException e) {
-      assertThat(e.getMessage()).isEqualTo("Reserved flags are unsupported.");
+      assertThat(e.getMessage()).isEqualTo("Reserved flags rsv2 and rsv3 are unsupported.");
     }
     data.clear();
     data.write(ByteString.decodeHex("9a00")); // Empty pong, flag 3 set.
@@ -75,7 +78,7 @@ public final class WebSocketReaderTest {
       clientReader.processNextFrame();
       fail();
     } catch (ProtocolException e) {
-      assertThat(e.getMessage()).isEqualTo("Reserved flags are unsupported.");
+      assertThat(e.getMessage()).isEqualTo("Reserved flags rsv2 and rsv3 are unsupported.");
     }
   }
 
