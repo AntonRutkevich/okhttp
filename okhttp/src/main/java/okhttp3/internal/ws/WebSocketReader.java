@@ -141,7 +141,8 @@ final class WebSocketReader implements Closeable {
     boolean reservedFlag3 = (b0 & B0_FLAG_RSV3) != 0;
 
     if (reservedFlag1 && !compressionEnabled) {
-      throw new ProtocolException("Reserved flag rsv1 is not supported if compression is disabled.");
+      throw new ProtocolException(
+          "Reserved flag rsv1 is not supported if compression is disabled.");
     }
 
     if (reservedFlag2 || reservedFlag3) {

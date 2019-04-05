@@ -15,7 +15,6 @@
  */
 package okhttp3.internal.ws;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.util.Random;
 import okio.Buffer;

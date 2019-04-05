@@ -93,7 +93,10 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   /** Null until this web socket is connected. Used for writes, pings, and close timeouts. */
   private ScheduledExecutorService executor;
 
-  /** Null until web socket is connected with compression enabled. Used to compress data at message level */
+  /**
+   * Null until web socket is connected with compression enabled.
+   * Used to compress data at message level.
+   */
   private MessageDeflater messageDeflater;
 
   /**
@@ -285,8 +288,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   public void initReaderAndWriter(String name, Streams streams) throws IOException {
     synchronized (this) {
       this.streams = streams;
-      this.messageDeflater = options.compressionEnabled ?
-          new MessageDeflater(options.contextTakeover) : null;
+      this.messageDeflater = options.compressionEnabled
+          ? new MessageDeflater(options.contextTakeover) : null;
       this.writer = new WebSocketWriter(streams.client, streams.sink, random,
           options.compressionEnabled);
       this.executor = new ScheduledThreadPoolExecutor(1, Util.threadFactory(name, false));
