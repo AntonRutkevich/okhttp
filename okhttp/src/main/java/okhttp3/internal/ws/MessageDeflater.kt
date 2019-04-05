@@ -24,7 +24,5 @@ class MessageDeflater(private val contextTakeover: Boolean) : Closeable {
   }
 
   @Throws(IOException::class)
-  override fun close() {
-    deflaterSink.close()
-  }
+  override fun close() = deflaterSink.close()
 }

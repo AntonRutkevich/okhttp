@@ -32,7 +32,5 @@ class MessageInflater : Closeable {
   }
 
   @Throws(IOException::class)
-  override fun close() {
-    inflaterSource.close()
-  }
+  override fun close() = inflaterSource.close()
 }
