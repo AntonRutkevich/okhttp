@@ -290,8 +290,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
       this.streams = streams;
       this.messageDeflater = options.compressionEnabled
           ? new MessageDeflater(options.contextTakeover) : null;
-      this.writer = new WebSocketWriter(streams.client, streams.sink, random,
-          options.compressionEnabled);
+      this.writer = new WebSocketWriter(streams.client, streams.sink, random);
       this.executor = new ScheduledThreadPoolExecutor(1, Util.threadFactory(name, false));
       if (pingIntervalMillis != 0) {
         executor.scheduleAtFixedRate(
@@ -544,13 +543,17 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         ByteString uncompressedData = ((Message) messageOrClose).data;
 
         ByteString data = uncompressedData;
+        boolean compressMessage = false;
         if (messageDeflater != null) {
-          data = CompressionCorrector.applyPostDeflate(
-              messageDeflater.deflate(uncompressedData)).readByteString();
+          ByteString deflated = messageDeflater.deflate(uncompressedData).readByteString();
+          if (options.contextTakeover || deflated.size() < uncompressedData.size()) {
+            data = deflated;
+            compressMessage = true;
+          }
         }
 
         BufferedSink sink = Okio.buffer(writer.newMessageSink(
-            ((Message) messageOrClose).formatOpcode, data.size()));
+            ((Message) messageOrClose).formatOpcode, data.size(), compressMessage));
         sink.write(data);
         sink.close();
         synchronized (this) {

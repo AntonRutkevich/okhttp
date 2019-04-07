@@ -54,15 +54,12 @@ final class WebSocketWriter {
   final Buffer buffer = new Buffer();
   final FrameSink frameSink = new FrameSink();
 
-  final boolean compressionEnabled;
-
   boolean activeWriter;
 
   private final byte[] maskKey;
   private final Buffer.UnsafeCursor maskCursor;
 
-  WebSocketWriter(boolean isClient, BufferedSink sink, Random random,
-      boolean compressionEnabled) {
+  WebSocketWriter(boolean isClient, BufferedSink sink, Random random) {
     if (sink == null) throw new NullPointerException("sink == null");
     if (random == null) throw new NullPointerException("random == null");
     this.isClient = isClient;
@@ -73,8 +70,6 @@ final class WebSocketWriter {
     // Masks are only a concern for client writers.
     maskKey = isClient ? new byte[4] : null;
     maskCursor = isClient ? new Buffer.UnsafeCursor() : null;
-
-    this.compressionEnabled = compressionEnabled;
   }
 
   /** Send a ping with the supplied {@code payload}. */
@@ -156,7 +151,7 @@ final class WebSocketWriter {
    * Stream a message payload as a series of frames. This allows control frames to be interleaved
    * between parts of the message.
    */
-  Sink newMessageSink(int formatOpcode, long contentLength) {
+  Sink newMessageSink(int formatOpcode, long contentLength, boolean isCompressed) {
     if (activeWriter) {
       throw new IllegalStateException("Another message writer is active. Did you call close()?");
     }
@@ -166,20 +161,21 @@ final class WebSocketWriter {
     frameSink.formatOpcode = formatOpcode;
     frameSink.contentLength = contentLength;
     frameSink.isFirstFrame = true;
+    frameSink.isCompressed = isCompressed;
     frameSink.closed = false;
 
     return frameSink;
   }
 
   void writeMessageFrame(int formatOpcode, long byteCount, boolean isFirstFrame,
-      boolean isFinal) throws IOException {
+      boolean isFinal, boolean isCompressed) throws IOException {
     if (writerClosed) throw new IOException("closed");
 
     int b0 = isFirstFrame ? formatOpcode : OPCODE_CONTINUATION;
     if (isFinal) {
       b0 |= B0_FLAG_FIN;
     }
-    if (compressionEnabled && isFirstFrame) {
+    if (isCompressed && isFirstFrame) {
       b0 |= B0_FLAG_RSV1;
     }
     sinkBuffer.writeByte(b0);
@@ -225,6 +221,7 @@ final class WebSocketWriter {
     int formatOpcode;
     long contentLength;
     boolean isFirstFrame;
+    boolean isCompressed;
     boolean closed;
 
     @Override public void write(Buffer source, long byteCount) throws IOException {
@@ -239,7 +236,7 @@ final class WebSocketWriter {
 
       long emitCount = buffer.completeSegmentByteCount();
       if (emitCount > 0 && !deferWrite) {
-        writeMessageFrame(formatOpcode, emitCount, isFirstFrame, false /* final */);
+        writeMessageFrame(formatOpcode, emitCount, isFirstFrame, false /* final */, isCompressed);
         isFirstFrame = false;
       }
     }
@@ -247,7 +244,7 @@ final class WebSocketWriter {
     @Override public void flush() throws IOException {
       if (closed) throw new IOException("closed");
 
-      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, false /* final */);
+      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, false /* final */, isCompressed);
       isFirstFrame = false;
     }
 
@@ -258,7 +255,7 @@ final class WebSocketWriter {
     @Override public void close() throws IOException {
       if (closed) throw new IOException("closed");
 
-      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, true /* final */);
+      writeMessageFrame(formatOpcode, buffer.size(), isFirstFrame, true /* final */, isCompressed);
       closed = true;
       activeWriter = false;
     }

@@ -55,11 +55,11 @@ public final class WebSocketWriterTest {
   };
 
   // Mutually exclusive. Use the one corresponding to the peer whose behavior you wish to test.
-  private final WebSocketWriter serverWriter = new WebSocketWriter(false, data, random, false);
-  private final WebSocketWriter clientWriter = new WebSocketWriter(true, data, random, false);
+  private final WebSocketWriter serverWriter = new WebSocketWriter(false, data, random);
+  private final WebSocketWriter clientWriter = new WebSocketWriter(true, data, random);
 
   @Test public void serverTextMessage() throws IOException {
-    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, -1));
+    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, -1, false));
 
     sink.writeUtf8("Hel").flush();
     assertData("010348656c");
@@ -76,7 +76,7 @@ public final class WebSocketWriterTest {
     byte[] bytes = binaryData(length);
 
     RequestBody body = RequestBody.create(null, bytes);
-    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, length));
+    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, length, false));
     body.writeTo(sink);
     sink.close();
 
@@ -90,7 +90,7 @@ public final class WebSocketWriterTest {
     byte[] bytes = binaryData(length);
 
     RequestBody body = RequestBody.create(null, bytes);
-    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, length));
+    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, length, false));
     body.writeTo(sink);
     sink.close();
 
@@ -104,7 +104,7 @@ public final class WebSocketWriterTest {
     int length = 100_000;
     Buffer bytes = new Buffer().write(binaryData(length));
 
-    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, length));
+    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, length, false));
     Buffer body = bytes.clone();
     sink.write(body.readByteString(20_000));
     sink.write(body.readByteString(20_000));
@@ -129,7 +129,7 @@ public final class WebSocketWriterTest {
   }
 
   @Test public void closeFlushes() throws IOException {
-    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, -1));
+    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_TEXT, -1, false));
 
     sink.writeUtf8("Hel").flush();
     assertData("010348656c");
@@ -139,7 +139,7 @@ public final class WebSocketWriterTest {
   }
 
   @Test public void noWritesAfterClose() throws IOException {
-    Sink sink = serverWriter.newMessageSink(OPCODE_TEXT, -1);
+    Sink sink = serverWriter.newMessageSink(OPCODE_TEXT, -1, false);
 
     sink.close();
     assertData("8100");
@@ -155,7 +155,7 @@ public final class WebSocketWriterTest {
   }
 
   @Test public void clientTextMessage() throws IOException {
-    BufferedSink sink = Okio.buffer(clientWriter.newMessageSink(OPCODE_TEXT, -1));
+    BufferedSink sink = Okio.buffer(clientWriter.newMessageSink(OPCODE_TEXT, -1, false));
 
     sink.writeUtf8("Hel").flush();
     assertData("018360b420bb28d14c");
@@ -172,7 +172,7 @@ public final class WebSocketWriterTest {
         + "60b420bb3851d9d47acb933dbe70399bf6c92da33af01d4fb7"
         + "70e98c0325f41d3ebaf8986da712c82bcd4d554bf0b54023c2");
 
-    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_BINARY, -1));
+    BufferedSink sink = Okio.buffer(serverWriter.newMessageSink(OPCODE_BINARY, -1, false));
 
     sink.write(data).flush();
     assertData("0232");
@@ -187,7 +187,7 @@ public final class WebSocketWriterTest {
   }
 
   @Test public void serverMessageLengthShort() throws IOException {
-    Sink sink = serverWriter.newMessageSink(OPCODE_BINARY, -1);
+    Sink sink = serverWriter.newMessageSink(OPCODE_BINARY, -1, false);
 
     // Create a payload which will overflow the normal payload byte size.
     Buffer payload = new Buffer();
@@ -207,7 +207,7 @@ public final class WebSocketWriterTest {
   }
 
   @Test public void serverMessageLengthLong() throws IOException {
-    Sink sink = serverWriter.newMessageSink(OPCODE_BINARY, -1);
+    Sink sink = serverWriter.newMessageSink(OPCODE_BINARY, -1, false);
 
     // Create a payload which will overflow the normal and short payload byte size.
     Buffer payload = new Buffer();
@@ -231,7 +231,7 @@ public final class WebSocketWriterTest {
         + "60b420bb3851d9d47acb933dbe70399bf6c92da33af01d4fb7"
         + "70e98c0325f41d3ebaf8986da712c82bcd4d554bf0b54023c2");
 
-    BufferedSink sink = Okio.buffer(clientWriter.newMessageSink(OPCODE_BINARY, -1));
+    BufferedSink sink = Okio.buffer(clientWriter.newMessageSink(OPCODE_BINARY, -1, false));
 
     sink.write(data).flush();
     assertData("02b2");
@@ -373,9 +373,9 @@ public final class WebSocketWriterTest {
   }
 
   @Test public void twoMessageSinksThrows() {
-    clientWriter.newMessageSink(OPCODE_TEXT, -1);
+    clientWriter.newMessageSink(OPCODE_TEXT, -1, false);
     try {
-      clientWriter.newMessageSink(OPCODE_TEXT, -1);
+      clientWriter.newMessageSink(OPCODE_TEXT, -1, false);
       fail();
     } catch (IllegalStateException e) {
       assertThat(e.getMessage()).isEqualTo(

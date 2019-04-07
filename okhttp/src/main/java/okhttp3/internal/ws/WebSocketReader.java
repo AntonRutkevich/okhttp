@@ -140,26 +140,28 @@ final class WebSocketReader implements Closeable {
     boolean reservedFlag2 = (b0 & B0_FLAG_RSV2) != 0;
     boolean reservedFlag3 = (b0 & B0_FLAG_RSV3) != 0;
 
-    if (reservedFlag1 && !compressionEnabled) {
-      throw new ProtocolException(
-          "Reserved flag rsv1 is not supported if compression is disabled.");
-    }
-
     if (reservedFlag2 || reservedFlag3) {
       // Reserved flags are for extensions which we currently do not support.
       throw new ProtocolException("Reserved flags rsv2 and rsv3 are unsupported.");
     }
 
-    if (reservedFlag1 && isControlFrame) {
-      throw new ProtocolException("Reserved flag rsv1 must not be set on control frames.");
-    }
+    if (reservedFlag1) {
+      if (!compressionEnabled) {
+        throw new ProtocolException(
+            "Reserved flag rsv1 is not supported if compression is disabled.");
+      }
 
-    if (reservedFlag1 && opcode == OPCODE_CONTINUATION) {
-      throw new ProtocolException("Reserved flag rsv1 1 must not be set on continuation frames.");
-    }
+      if (isControlFrame) {
+        throw new ProtocolException("Reserved flag rsv1 must not be set on control frames.");
+      }
 
-    if (compressionEnabled && opcode == OPCODE_TEXT || opcode == OPCODE_BINARY) {
-      readingCompressedMessage = reservedFlag1;
+      if (opcode == OPCODE_CONTINUATION) {
+        throw new ProtocolException("Reserved flag rsv1 1 must not be set on continuation frames.");
+      }
+
+      if (opcode == OPCODE_TEXT || opcode == OPCODE_BINARY) {
+        readingCompressedMessage = true;
+      }
     }
 
     int b1 = source.readByte() & 0xff;
@@ -242,7 +244,7 @@ final class WebSocketReader implements Closeable {
     readMessage();
 
     final Buffer message = readingCompressedMessage
-        ? messageInflater.inflate(CompressionCorrector.applyPreInflate(messageFrameBuffer))
+        ? messageInflater.inflate(messageFrameBuffer)
         : messageFrameBuffer;
 
     readingCompressedMessage = false;

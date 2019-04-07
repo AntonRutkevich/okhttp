@@ -257,10 +257,10 @@ open class OkHttpClient internal constructor(
   /** Web socket and HTTP/2 ping interval (in milliseconds). By default pings are not sent. */
   open fun pingIntervalMillis(): Int = pingInterval
 
-  /** Whether WebSocket compression was requested. */
+  /** Returns true if web socket compression was requested. */
   open fun webSocketCompression(): Boolean = webSocketCompression
 
-  /** Whether WebSocket compression "context takeover" was requested. */
+  /** Returns true if web socket compression "context takeover" was requested. */
   open fun webSocketContextTakeover(): Boolean = webSocketContextTakeover
 
   internal fun internalCache(): InternalCache? {

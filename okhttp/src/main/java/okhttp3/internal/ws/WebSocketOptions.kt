@@ -1,3 +1,18 @@
+/*
+ * Copyright (C) 2012 Square, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package okhttp3.internal.ws
 
 import okhttp3.Response
@@ -20,29 +35,29 @@ data class WebSocketOptions(
     @Throws(IOException::class)
     @JvmStatic
     fun parseServerResponse(response: Response): WebSocketOptions =
-        response.header("Sec-WebSocket-Extensions")
-            ?.takeIf { it.contains("permessage-deflate") }
-            ?.let { extensionHeader ->
-              val options = extensionHeader.split(" ").map { it.replace(";", "") }
+        response.header("Sec-WebSocket-Extensions")?.let { extensionHeader ->
+          if ("permessage-deflate" in extensionHeader) {
+            val options = extensionHeader.split(" ").map { it.replace(";", "") }
 
-              val clientNoContextTakeover = parseClientNoContextTakeover(options)
-              val clientMaxWindowBits = parseClientMaxWindowBits(options)
+            // TODO: proper extension parsing
+            val clientNoContextTakeover = parseClientNoContextTakeover(options)
+            val clientMaxWindowBits = parseClientMaxWindowBits(options)
 
-              if (!clientNoContextTakeover) {
-                if (clientMaxWindowBits != null
-                    && clientMaxWindowBits != SUPPORTED_CLIENT_MAX_WINDOW_BITS) {
-                  throw IOException(
-                      "'$OPTION_CLIENT_MAX_WINDOW_BITS' of $clientMaxWindowBits is not supported. " +
-                      "Use $SUPPORTED_CLIENT_MAX_WINDOW_BITS or '$OPTION_CLIENT_NO_CONTEXT_TAKEOVER' option")
-                }
-              }
-
-              WebSocketOptions(
-                  compressionEnabled = true,
-                  contextTakeover = !clientNoContextTakeover
-              )
+            if (clientMaxWindowBits != null
+                && clientMaxWindowBits != SUPPORTED_CLIENT_MAX_WINDOW_BITS) {
+              throw IOException(
+                  "'$OPTION_CLIENT_MAX_WINDOW_BITS' of $clientMaxWindowBits is not supported. " +
+                  "Use $SUPPORTED_CLIENT_MAX_WINDOW_BITS or '$OPTION_CLIENT_NO_CONTEXT_TAKEOVER' option")
             }
-        ?: DEFAULT
+
+            WebSocketOptions(
+                compressionEnabled = true,
+                contextTakeover = !clientNoContextTakeover
+            )
+          } else {
+            DEFAULT
+          }
+        } ?: DEFAULT
 
     private fun parseClientNoContextTakeover(options: List<String>): Boolean = options
         .firstOrNull { it == OPTION_CLIENT_NO_CONTEXT_TAKEOVER } != null
