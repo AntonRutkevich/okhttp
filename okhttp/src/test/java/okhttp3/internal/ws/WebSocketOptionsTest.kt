@@ -34,6 +34,11 @@ internal class WebSocketOptionsTest(
 
   private companion object {
 
+    val NO_COMPRESSION = WebSocketOptions(
+        compressionEnabled = false,
+        contextTakeover = false
+    )
+
     val COMPRESSION_NO_TAKEOVER = WebSocketOptions(
         compressionEnabled = true,
         contextTakeover = false
@@ -59,6 +64,12 @@ internal class WebSocketOptionsTest(
     @JvmStatic
     @Parameterized.Parameters(name = "{0}")
     fun parameters(): Collection<Array<out Any?>> = listOf(
+        arrayOf(
+            "",
+            NO_COMPRESSION,
+            null
+        ),
+
         arrayOf(
             "permessage-deflate",
             COMPRESSION_WITH_TAKEOVER,
@@ -173,11 +184,6 @@ internal class WebSocketOptionsTest(
             "unknown-ext",
             null,
             "Extension not supported: 'unknown-ext'"
-        ),
-        arrayOf(
-            "",
-            null,
-            "Sec-WebSocket-Extensions is empty"
         )
     )
 

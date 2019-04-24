@@ -165,7 +165,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
   /** True if we have sent a ping that is still awaiting a reply. */
   private boolean awaitingPong;
 
-  public RealWebSocket(Request request, WebSocketListener listener, Random random,
+  // Compression and contextTakeover are only used to initialize server in tests
+  RealWebSocket(Request request, WebSocketListener listener, Random random,
       long pingIntervalMillis, boolean compression, boolean contextTakeover) {
     if (!"GET".equals(request.method())) {
       throw new IllegalArgumentException("Request must be GET: " + request.method());
@@ -219,12 +220,8 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
         .header("Sec-WebSocket-Key", key)
         .header("Sec-WebSocket-Version", "13");
 
-    if (options.compressionEnabled) {
-      if (options.contextTakeover) {
+    if (originalRequest.header(HEADER_WS_EXTENSION) == null) {
         builder.header(HEADER_WS_EXTENSION, HEADER_VALUE_CONTEXT_TAKEOVER);
-      } else {
-        builder.header(HEADER_WS_EXTENSION, HEADER_VALUE_DEFAULT_CONTEXT_TAKEOVER);
-      }
     }
 
     final Request request = builder.build();

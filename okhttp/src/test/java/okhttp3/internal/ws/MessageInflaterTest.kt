@@ -15,7 +15,6 @@
  */
 package okhttp3.internal.ws
 
-import junit.framework.Assert.fail
 import okhttp3.WebPlatformUrlTest
 import okio.Buffer
 import okio.BufferedSource
@@ -23,6 +22,7 @@ import okio.ByteString.Companion.decodeHex
 import okio.buffer
 import okio.source
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.Assert.fail
 import org.junit.Test
 import java.io.EOFException
 

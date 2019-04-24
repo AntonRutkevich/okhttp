@@ -149,8 +149,6 @@ open class OkHttpClient internal constructor(
   private val readTimeout: Int = builder.readTimeout
   private val writeTimeout: Int = builder.writeTimeout
   private val pingInterval: Int = builder.pingInterval
-  private val webSocketCompression: Boolean = builder.webSocketCompression
-  private val webSocketContextTakeover: Boolean = builder.webSocketContextTakeover
   private val internalCache: InternalCache? = builder.internalCache
   private val certificateChainCleaner: CertificateChainCleaner?
 
@@ -185,12 +183,6 @@ open class OkHttpClient internal constructor(
     }
     check(null !in (networkInterceptors as List<Interceptor?>)) {
       "Null network interceptor: $networkInterceptors"
-    }
-
-    if (!webSocketCompression) {
-      check(!webSocketContextTakeover) {
-        "Web socket compression must be enabled to specify web socket context takeover"
-      }
     }
   }
 
@@ -264,12 +256,6 @@ open class OkHttpClient internal constructor(
   /** Web socket and HTTP/2 ping interval (in milliseconds). By default pings are not sent. */
   open fun pingIntervalMillis(): Int = pingInterval
 
-  /** Returns true if web socket compression was requested. */
-  internal open fun webSocketCompression(): Boolean = webSocketCompression
-
-  /** Returns true if web socket compression "context takeover" was requested. */
-  internal open fun webSocketContextTakeover(): Boolean = webSocketContextTakeover
-
   internal fun internalCache(): InternalCache? {
     return cache?.internalCache ?: internalCache
   }
@@ -281,8 +267,7 @@ open class OkHttpClient internal constructor(
 
   /** Uses [request] to connect a new web socket. */
   override fun newWebSocket(request: Request, listener: WebSocketListener): WebSocket {
-    val webSocket = RealWebSocket(request, listener, Random(),
-        pingInterval.toLong(), webSocketCompression, webSocketContextTakeover)
+    val webSocket = RealWebSocket(request, listener, Random(), pingInterval.toLong())
     webSocket.connect(this)
     return webSocket
   }
@@ -319,8 +304,6 @@ open class OkHttpClient internal constructor(
     internal var readTimeout: Int = 10000
     internal var writeTimeout: Int = 10000
     internal var pingInterval: Int = 0
-    internal var webSocketCompression: Boolean = false
-    internal var webSocketContextTakeover: Boolean = false
 
     internal constructor(okHttpClient: OkHttpClient) : this() {
       this.dispatcher = okHttpClient.dispatcher
@@ -351,8 +334,6 @@ open class OkHttpClient internal constructor(
       this.readTimeout = okHttpClient.readTimeout
       this.writeTimeout = okHttpClient.writeTimeout
       this.pingInterval = okHttpClient.pingInterval
-      this.webSocketCompression = okHttpClient.webSocketCompression
-      this.webSocketContextTakeover = okHttpClient.webSocketContextTakeover
     }
 
     /**
@@ -496,37 +477,6 @@ open class OkHttpClient internal constructor(
     @IgnoreJRERequirement
     fun pingInterval(duration: Duration) = apply {
       pingInterval = checkDuration("timeout", duration.toMillis(), TimeUnit.MILLISECONDS)
-    }
-
-    /**
-     * Enabled WebSocket compression.
-     *
-     * Note that compression must be supported by both client and the server.
-     * Setting this to true suggests the server to use "permessage-deflate" compression.
-     * If server does not agree, compression will not be enabled.
-     * For details on negotiation see
-     * [rfc7692#section-5](https://tools.ietf.org/html/rfc7692#section-5)
-     */
-    internal fun webSocketCompression(compression: Boolean) = apply {
-      webSocketCompression = compression
-    }
-
-    /**
-     * Enabled context takeover for WebSocket compression.
-     *
-     * "context takeover" means that deflater context will be preserved
-     * to compress subsequent messages, providing higher compression rate.
-     *
-     * Note that context takeover must be supported by both the client and the server.
-     * Setting this to `true` tells the server to use context takeover for compression
-     * and notifies it that the client wants to use it too.
-     * If server does not agree to use context takeover,
-     * but agrees to use compression in general, compression without context takeover will be used.
-     * For details on context takeover see
-     * [rfc7692#section-7.1.1](https://tools.ietf.org/html/rfc7692#section-7.1.1)
-     */
-    internal fun webSocketContextTakeover(contextTakeover: Boolean) = apply {
-      webSocketContextTakeover = contextTakeover
     }
 
     /**

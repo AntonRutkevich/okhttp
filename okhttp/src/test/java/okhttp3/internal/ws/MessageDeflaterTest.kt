@@ -15,11 +15,11 @@
  */
 package okhttp3.internal.ws
 
-import junit.framework.Assert.fail
 import okio.Buffer
 import okio.ByteString.Companion.encodeUtf8
 import okio.ByteString.Companion.toByteString
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.Assert.fail
 import org.junit.Test
 import java.util.Random
 

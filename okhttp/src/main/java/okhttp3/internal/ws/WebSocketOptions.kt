@@ -48,8 +48,10 @@ data class WebSocketOptions(
       // No extension header - server does not support permessage-deflate.
       val header = response.header(HEADER_WEB_SOCKET_EXTENSION) ?: return NO_COMPRESSION
 
+      // Server is free to return empty header to indicate no compression
+      // See end of https://tools.ietf.org/html/rfc7692#section-5 chapter
       if (header.isEmpty()) {
-        throw ProtocolException("$HEADER_WEB_SOCKET_EXTENSION is empty")
+        return NO_COMPRESSION
       }
 
       val extension = header

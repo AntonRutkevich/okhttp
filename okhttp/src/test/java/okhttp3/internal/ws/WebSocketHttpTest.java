@@ -405,10 +405,11 @@ public final class WebSocketHttpTest {
     closeWebSockets(webSocket, server);
   }
 
-  @Test public void noExtensionHeaderWithDisabledCompression() {
+  @Test public void compressionHeaderIsSentIfNoCustomExtensionHeaderInOriginalRequest() {
     client = client.newBuilder()
         .addInterceptor(chain -> {
-          assertThat(chain.request().header(HEADER_WS_EXTENSION)).isNull();
+          assertThat(chain.request().header(HEADER_WS_EXTENSION))
+              .isEqualTo("permessage-deflate; server_max_window_bits=15; client_max_window_bits=15");
           return chain.proceed(chain.request());
         })
         .build();
@@ -416,6 +417,30 @@ public final class WebSocketHttpTest {
     webServer.enqueue(new MockResponse().withWebSocketUpgrade(serverListener));
 
     WebSocket webSocket = newWebSocket();
+    clientListener.assertOpen();
+
+    closeWebSockets(webSocket, serverListener.assertOpen());
+  }
+
+  @Test public void extensionHeaderInOriginalRequestIsNotOverwritten() {
+    String customExtensionHeader = "permessage-deflate";
+
+    client = client.newBuilder()
+        .addInterceptor(chain -> {
+          assertThat(chain.request().header(HEADER_WS_EXTENSION))
+              .isEqualTo(customExtensionHeader);
+          return chain.proceed(chain.request());
+        })
+        .build();
+
+    webServer.enqueue(new MockResponse().withWebSocketUpgrade(serverListener));
+
+    Request request = new Request.Builder()
+        .url(webServer.url("/"))
+        .header(HEADER_WS_EXTENSION, customExtensionHeader)
+        .build();
+
+    WebSocket webSocket = newWebSocket(request);
     clientListener.assertOpen();
 
     closeWebSockets(webSocket, serverListener.assertOpen());
@@ -811,8 +836,7 @@ public final class WebSocketHttpTest {
   private RealWebSocket newWebSocket(Request request) {
     RealWebSocket webSocket = new RealWebSocket(
         request, clientListener, random,
-        client.pingIntervalMillis(),
-        false, false);
+        client.pingIntervalMillis());
     webSocket.connect(client);
     return webSocket;
   }
