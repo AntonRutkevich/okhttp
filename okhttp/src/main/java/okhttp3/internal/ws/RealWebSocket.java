@@ -401,6 +401,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
     synchronized (this) {
       if (pongTimeoutFuture != null) pongTimeoutFuture.cancel(false);
     }
+    listener.onPong(this);
   }
 
   @Override public void onReadClose(int code, String reason) {
@@ -650,6 +651,7 @@ public final class RealWebSocket implements WebSocket, WebSocketReader.FrameCall
 
     try {
       writer.writePing(ByteString.EMPTY);
+      listener.onPing(this);
     } catch (IOException e) {
       failWebSocket(e, null);
     }
