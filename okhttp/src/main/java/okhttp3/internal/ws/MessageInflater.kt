@@ -16,12 +16,16 @@
 package okhttp3.internal.ws
 
 import okio.Buffer
+import okio.ByteString.Companion.decodeHex
 import okio.InflaterSource
 import java.io.Closeable
 import java.io.IOException
+import java.lang.Exception
 import java.util.zip.Inflater
+import kotlin.math.min
 
 private const val OCTETS_TO_ADD_BEFORE_INFLATION = 0x0000ffff
+private val ZERO_BYTE = "00".decodeHex()
 
 class MessageInflater : Closeable {
   private val source = Buffer()
@@ -39,23 +43,72 @@ class MessageInflater : Closeable {
   fun inflate(buffer: Buffer): Buffer {
     require(source.size == 0L)
 
+    println("START READING BUFFER")
+    println("totalBytesToInflate = $totalBytesToInflate")
+    println("payload_size = ${buffer.size}")
+
+    val sizeToLog = min(8, buffer.size)
+    val start = Buffer()
+    buffer.copyTo(start, 0, sizeToLog)
+    val startBuf = start.readByteString().hex()
+
+    val end = Buffer()
+    buffer.copyTo(end, buffer.size - sizeToLog, sizeToLog)
+    val endBuf = end.readByteString().hex()
+
+    println("Buffer start-end: $startBuf...$endBuf")
+
     source.writeAll(buffer)
+    println("source_size = ${source.size}")
+
+    //    if (source.endsWith00()) {
+    println("adding 4 octets")
     source.writeInt(OCTETS_TO_ADD_BEFORE_INFLATION)
+    //    } else {
+    //      println("adding no octets")
+    //source.writeByte(0x00)
+    //source.writeInt(OCTETS_TO_ADD_BEFORE_INFLATION)
+    //    }
+
+    println("source_size = ${source.size}")
 
     totalBytesToInflate += source.size
+
+    println("totalBytesToInflate with source = $totalBytesToInflate")
 
     return buffer.apply {
       // We cannot read all, as the source does not close.
       // Instead, we ensure that all bytes from source have been processed by inflater.
-      while (true) {
-        inflaterSource.read(this, Long.MAX_VALUE)
-        if (inflater.bytesRead == totalBytesToInflate) {
-          break
+      try {
+        while (true) {
+          println("1 inflater.bytesRead = ${inflater.bytesRead}")
+          println("1 inflater.remaining = ${inflater.remaining}")
+          println("1 source.size = ${source.size}")
+          println("1 source.buffer.size = ${source.buffer.size}")
+          val read = inflaterSource.read(this, Long.MAX_VALUE)
+          println("2 inflater.bytesRead after reading $read bytes and tbti of $totalBytesToInflate = ${inflater.bytesRead}")
+          println("2 inflater.remaining after reading = ${inflater.remaining}")
+          println("2 source.size after reading = ${source.size}")
+          println("2 source.buffer.size after reading = ${source.buffer.size}")
+          if (inflater.bytesRead == totalBytesToInflate || (inflater.bytesRead == totalBytesToInflate - 4)) {
+            println("2 END READING BUFFER")
+            break
+          }
         }
+      } catch (e: Exception) {
+        println("3 inflater.bytesRead in catch = ${inflater.bytesRead}")
+        println("3 source.size in catch = ${source.size}")
+
+        println("3 buffer in catch ${this.snapshot().utf8()}")
+        println("Buffer start-end in catch: $startBuf...$endBuf")
+        throw e
       }
     }
   }
 
   @Throws(IOException::class)
   override fun close() = inflaterSource.close()
+
+  private fun Buffer.endsWith00(): Boolean = rangeEquals(
+    size - 1, ZERO_BYTE)
 }
